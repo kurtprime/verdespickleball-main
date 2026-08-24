@@ -388,7 +388,13 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-// SPA fallback: serve index.html for any unmatched route (Vercel production)
+// SPA fallback: specific pages first, then index.html for everything else
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+app.get('/admin-dashboard', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-dashboard.html'));
+});
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
