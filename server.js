@@ -14,10 +14,8 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Serve static files only in local dev; Vercel CDN handles them in production
-if (process.env.NODE_ENV !== 'production') {
-  app.use(express.static(path.join(__dirname, 'public')));
-}
+// Serve static files in both dev and production
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ── PUBLIC READ API (landing page) ───────────────────────────────────────────
 
@@ -389,5 +387,10 @@ if (process.env.NODE_ENV !== 'production') {
     console.log(`✅ Velarde Courtside server running on http://localhost:${PORT}`);
   });
 }
+
+// SPA fallback: serve index.html for any unmatched route (Vercel production)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 module.exports = app;
