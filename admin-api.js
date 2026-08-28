@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path   = require('path');
 const fs     = require('fs');
-const { signToken, requireAuth, bcrypt } = require('./auth');
+const { signToken, bcrypt } = require('./auth');
 
 const storage = multer.diskStorage({
   destination(req, file, cb) {
@@ -77,9 +77,6 @@ function setupAdminRoutes(app, supabase) {
       res.status(500).json({ error: 'Login failed' });
     }
   });
-
-  // ── AUTH GUARD — protect every /api/admin/* route below ───────────────────
-  app.use('/api/admin', requireAuth);
 
   // ── FILE UPLOAD ────────────────────────────────────────────────────────────
 

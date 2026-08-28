@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 let allBookings = [];
 let selectedBookingId = null;
@@ -6,24 +6,11 @@ let currentTracking = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-  checkAdminAuth();
   updateCurrentTime();
   setInterval(updateCurrentTime, 1000);
   refreshData();
   setInterval(refreshData, 30000); // Refresh every 30 seconds
 });
-
-function checkAdminAuth() {
-  const token = localStorage.getItem('adminToken');
-  if (!token) {
-    window.location.href = '/';
-  }
-}
-
-function logout() {
-  localStorage.removeItem('adminToken');
-  window.location.href = '/';
-}
 
 function updateCurrentTime() {
   const now = new Date();
