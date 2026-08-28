@@ -3,7 +3,6 @@ const cors    = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const { v4: uuidv4 }   = require('uuid');
 const { setupAdminRoutes } = require('../admin-api');
-const { requireAuth } = require('../auth');
 
 const app = express();
 app.use(cors());
@@ -202,7 +201,7 @@ app.get('/api/payments/:paymentId', async (req, res) => {
 });
 
 // ── ADMIN CHECK-IN / CHECK-OUT ────────────────────────────────────────────────
-app.post('/api/admin/checkin', requireAuth, async (req, res) => {
+app.post('/api/admin/checkin', async (req, res) => {
   try {
     const { bookingId, checkInTime } = req.body;
     if (!bookingId) return res.status(400).json({ error: 'Missing bookingId' });
@@ -214,7 +213,7 @@ app.post('/api/admin/checkin', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to check in' }); }
 });
 
-app.post('/api/admin/checkout', requireAuth, async (req, res) => {
+app.post('/api/admin/checkout', async (req, res) => {
   try {
     const { bookingId, checkOutTime } = req.body;
     if (!bookingId) return res.status(400).json({ error: 'Missing bookingId' });
@@ -226,7 +225,7 @@ app.post('/api/admin/checkout', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to check out' }); }
 });
 
-app.post('/api/admin/reset-tracking', requireAuth, async (req, res) => {
+app.post('/api/admin/reset-tracking', async (req, res) => {
   try {
     const { bookingId } = req.body;
     if (!bookingId) return res.status(400).json({ error: 'Missing bookingId' });
@@ -235,7 +234,7 @@ app.post('/api/admin/reset-tracking', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to reset tracking' }); }
 });
 
-app.post('/api/admin/cancel-booking', requireAuth, async (req, res) => {
+app.post('/api/admin/cancel-booking', async (req, res) => {
   try {
     const { bookingId, status } = req.body;
     if (!bookingId) return res.status(400).json({ error: 'Missing bookingId' });

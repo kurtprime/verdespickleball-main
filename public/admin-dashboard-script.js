@@ -2,7 +2,6 @@ const ADMIN_API = '/api/admin';
 
 let currentUser = null;
 let currentEditingId = null;
-let isLoggedIn = false;
 let courtsCache = [];
 
 let scheduleMode   = 'day';
@@ -11,90 +10,8 @@ let scheduleHours  = { start: 7, end: 19 };
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-  setupLoginForm();
-  checkAndInitialize();
+  initializeDashboard();
 });
-
-function setupLoginForm() {
-  const loginForm = document.getElementById('loginForm');
-  if (loginForm) {
-    loginForm.addEventListener('submit', handleLogin);
-  }
-}
-
-async function handleLogin(e) {
-  e.preventDefault();
-
-  const username = document.getElementById('loginUsername').value.trim();
-  const password = document.getElementById('loginPassword').value;
-  const rememberMe = document.getElementById('rememberMe').checked;
-
-  const errorDiv = document.getElementById('loginError');
-  const errorMsg = document.getElementById('loginErrorMessage');
-  const submitBtn = loginForm.querySelector('button[type="submit"]');
-
-  errorDiv.style.display = 'none';
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Signing In...';
-
-  try {
-    const response = await fetch(`${ADMIN_API}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Invalid username or password');
-
-    localStorage.setItem('adminToken', data.token);
-    localStorage.setItem('adminUsername', data.username || username);
-    if (data.fullName) localStorage.setItem('adminFullName', data.fullName);
-    if (rememberMe) {
-      localStorage.setItem('rememberMe', 'true');
-    } else {
-      localStorage.removeItem('rememberMe');
-    }
-
-    isLoggedIn = true;
-    document.getElementById('loginModal').classList.remove('active');
-    initializeDashboard();
-  } catch (error) {
-    // Fallback: allow local default credentials when the server is unreachable
-    if (error instanceof TypeError && username === 'admin' && password === 'admin123') {
-      localStorage.setItem('adminToken', 'token-' + Date.now());
-      localStorage.setItem('adminUsername', username);
-      isLoggedIn = true;
-      document.getElementById('loginModal').classList.remove('active');
-      showNotification('Server offline — using offline mode', 'info');
-      initializeDashboard();
-    } else {
-      errorMsg.textContent = error.message || 'Login failed';
-      errorDiv.style.display = 'flex';
-    }
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Sign In';
-  }
-}
-
-function checkAndInitialize() {
-  const token = localStorage.getItem('adminToken');
-  const savedUsername = localStorage.getItem('adminUsername');
-  const rememberMe = localStorage.getItem('rememberMe');
-
-  if (token) {
-    isLoggedIn = true;
-    document.getElementById('loginModal').classList.remove('active');
-    initializeDashboard();
-  } else {
-    document.getElementById('loginModal').classList.add('active');
-    if (rememberMe && savedUsername) {
-      document.getElementById('loginUsername').value = savedUsername;
-      document.getElementById('rememberMe').checked = true;
-    }
-  }
-}
 
 function initializeDashboard() {
   updateCurrentTime();
@@ -103,20 +20,6 @@ function initializeDashboard() {
   setupFormListeners();
   loadDashboard();
   navigateTo('dashboard');
-}
-
-function logout() {
-  if (confirm('Are you sure you want to logout?')) {
-    localStorage.removeItem('adminToken');
-    localStorage.removeItem('adminUsername');
-    localStorage.removeItem('adminFullName');
-    localStorage.removeItem('rememberMe');
-    isLoggedIn = false;
-
-    document.getElementById('loginModal').classList.add('active');
-    document.getElementById('loginForm').reset();
-    document.getElementById('loginError').style.display = 'none';
-  }
 }
 
 function updateAdminUser() {
@@ -182,9 +85,7 @@ function navigateTo(section) {
 
 // ===== HELPERS =====
 async function apiFetch(url, options = {}) {
-  const token = localStorage.getItem('adminToken');
   const headers = Object.assign({}, options.headers || {});
-  if (token) headers['Authorization'] = 'Bearer ' + token;
   const merged = Object.assign({}, options, { headers });
 
   let response;
@@ -314,12 +215,8 @@ function setupFileUpload(dropAreaId, inputId, fieldName, url, onSuccess) {
     dropArea.style.opacity = '0.5';
 
     try {
-      const token = localStorage.getItem('adminToken');
-      const headers = {};
-      if (token) headers['Authorization'] = 'Bearer ' + token;
       const response = await fetch(url, {
         method: 'POST',
-        headers,
         body: formData
       });
       const data = await response.json();
