@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path   = require('path');
 const fs     = require('fs');
+const multer = require('multer');
 const { signToken, bcrypt } = require('./auth');
 
 const storage = multer.diskStorage({
