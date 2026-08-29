@@ -11,7 +11,11 @@ const PORT = process.env.PORT || 5000;
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
-app.use(express.json());
+// Increase JSON body limit to allow data URL image payloads
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
+
+// (UploadThing routes removed — using Supabase Storage instead)
 
 // Serve static files in both dev and production
 app.use(express.static(path.join(__dirname, 'public')));
@@ -21,11 +25,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/api/courts', async (req, res) => {
   try {
     const { data, error } = await supabase.from('courts')
-      .select('id, court_number, name, description, capacity, surface_type, status, image_url')
+      .select('id, court_number, name, description, capacity, surface_type, status, image_url, image_base64')
       .eq('status', 'active')
       .order('court_number');
     if (error) throw error;
-    res.json(data || []);
+    const mapped = (data || []).map(c => ({
+      ...c,
+      image_url: c.image_base64 || c.image_url || null
+    }));
+    res.json(mapped);
   } catch (err) {
     console.error('Error fetching courts:', err);
     res.status(500).json({ error: 'Failed to fetch courts' });
@@ -67,11 +75,15 @@ app.get('/api/pricing', async (req, res) => {
 app.get('/api/payment-methods', async (req, res) => {
   try {
     const { data, error } = await supabase.from('payment_methods')
-      .select('method_name, description, instructions, account_details, qr_code_url')
+      .select('method_name, description, instructions, account_details, qr_code_url, qr_base64')
       .eq('is_active', true)
       .order('sort_order');
     if (error) throw error;
-    res.json(data || []);
+    const mapped = (data || []).map(m => ({
+      ...m,
+      qr_code_url: m.qr_base64 || m.qr_code_url || null
+    }));
+    res.json(mapped);
   } catch (err) {
     console.error('Error fetching payment methods:', err);
     res.status(500).json({ error: 'Failed to fetch payment methods' });
@@ -81,11 +93,12 @@ app.get('/api/payment-methods', async (req, res) => {
 app.get('/api/website-settings', async (req, res) => {
   try {
     const { data } = await supabase.from('website_settings')
-      .select('site_name, phone, email, address, operating_hours_start, operating_hours_end, site_description, about_text, terms_text, logo_url')
+      .select('site_name, phone, email, address, operating_hours_start, operating_hours_end, site_description, about_text, terms_text, logo_url, logo_base64')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    res.json(data || { site_name: 'Velarde Courtside', operating_hours_start: '07:00', operating_hours_end: '19:00' });
+    const mapped = data ? { ...data, logo_url: data.logo_base64 || data.logo_url || null } : { site_name: 'Velarde Courtside', operating_hours_start: '07:00', operating_hours_end: '19:00' };
+    res.json(mapped);
   } catch (err) {
     console.error('Error fetching website settings:', err);
     res.status(500).json({ error: 'Failed to fetch website settings' });
@@ -196,19 +209,25 @@ app.post('/api/bookings', async (req, res) => {
       booking_date: bookingDate, start_time: startTime, end_time: endTime,
       duration_hours: durationHours, price_amount: priceAmount, status: 'pending'
     });
-    if (bErr) throw bErr;
+    if (bErr) {
+      console.error('DB insert bookings error:', bErr);
+      return res.status(500).json({ error: 'Failed to create booking (bookings insert)', code: 'DB_BOOKINGS_INSERT', detail: bErr.message || String(bErr) });
+    }
 
     const paymentId = uuidv4();
     const { error: payErr } = await supabase.from('payments').insert({
       id: paymentId, booking_id: bookingId, user_id: userId,
       amount: priceAmount, status: 'pending'
     });
-    if (payErr) throw payErr;
+    if (payErr) {
+      console.error('DB insert payments error:', payErr);
+      return res.status(500).json({ error: 'Failed to create booking (payments insert)', code: 'DB_PAYMENTS_INSERT', detail: payErr.message || String(payErr) });
+    }
 
     res.status(201).json({ bookingId, paymentId, courtNumber, bookingDate, startTime, endTime, durationHours, priceAmount, dayType, status: 'pending' });
   } catch (err) {
-    console.error('Error creating booking:', err);
-    res.status(500).json({ error: 'Failed to create booking' });
+    console.error('Error creating booking (unexpected):', err);
+    res.status(500).json({ error: 'Failed to create booking', code: 'BOOKING_UNEXPECTED', detail: err?.message || String(err) });
   }
 });
 
@@ -379,6 +398,18 @@ app.post('/api/admin/cancel-booking', async (req, res) => {
 
 // ── ADMIN ROUTES ──────────────────────────────────────────────────────────────
 setupAdminRoutes(app, supabase);
+
+app.get('/api/diag/supabase', async (req, res) => {
+  try {
+    // Simple query to test connection
+    const { data, error } = await supabase.from('courts').select('count', { count: 'exact', head: true });
+    if (error) throw error;
+    res.json({ success: true, message: 'Supabase connected', count: data?.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 // ── START (local dev only) ────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'production') {
