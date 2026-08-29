@@ -1,8 +1,8 @@
 // Admin API Endpoints — Supabase + CommonJS version
 const { v4: uuidv4 } = require('uuid');
-const multer = require('multer');
 const path   = require('path');
 const fs     = require('fs');
+const multer = require('multer');
 const { signToken, bcrypt } = require('./auth');
 
 const storage = multer.diskStorage({
@@ -78,16 +78,23 @@ function setupAdminRoutes(app, supabase) {
     }
   });
 
-  // ── FILE UPLOAD ────────────────────────────────────────────────────────────
+  // ── FILE UPLOADS → Supabase Storage ────────────────────────────────────────
+  const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
-  app.post('/api/admin/upload-image', upload.single('image'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    res.json({ url: `/images/uploads/${req.file.filename}` });
-  });
-
-  app.post('/api/admin/upload-logo', upload.single('logo'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    res.json({ url: `/images/uploads/${req.file.filename}` });
+  // Unified upload endpoint
+  // Usage: POST /api/admin/upload?bucket=<bucket>&folder=<folder>  (field name: image)
+  app.post('/api/admin/upload', memoryUpload.single('image'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+      // Convert to data URL for database storage
+      const mime = req.file.mimetype || 'application/octet-stream';
+      const base64 = req.file.buffer.toString('base64');
+      const dataUrl = `data:${mime};base64,${base64}`;
+      res.json({ url: dataUrl });
+    } catch (err) {
+      console.error('Base64 upload error:', err?.message || err);
+      res.status(500).json({ error: 'Upload failed', detail: err?.message || String(err) });
+    }
   });
 
   // ── WEBSITE SETTINGS ───────────────────────────────────────────────────────
@@ -96,17 +103,23 @@ function setupAdminRoutes(app, supabase) {
     try {
       const { data } = await supabase.from('website_settings')
         .select('*').order('created_at', { ascending: false }).limit(1).maybeSingle();
-      res.json(data || { site_name: 'Velarde Courtside', operating_hours_start: '07:00', operating_hours_end: '19:00' });
+      if (data) {
+        res.json({ ...data, logo_url: data.logo_base64 || data.logo_url || null });
+      } else {
+        res.json({ site_name: 'Velarde Courtside', operating_hours_start: '07:00', operating_hours_end: '19:00' });
+      }
     } catch { res.status(500).json({ error: 'Failed to fetch settings' }); }
   });
 
   app.post('/api/admin/website-settings', async (req, res) => {
     try {
-      const { site_name, phone, email, address, operating_hours_start, operating_hours_end, site_description, about_text, terms_text, logo_url } = req.body;
+      const { site_name, phone, email, address, operating_hours_start, operating_hours_end, site_description, about_text, terms_text } = req.body;
+      let { logo_url } = req.body;
+      const isDataUrl = typeof logo_url === 'string' && logo_url.startsWith('data:');
       const { data: existing } = await supabase.from('website_settings')
         .select('id').order('created_at', { ascending: false }).limit(1).maybeSingle();
 
-      const payload = { site_name, phone, email, address, operating_hours_start, operating_hours_end, site_description, about_text, terms_text, logo_url, updated_at: new Date().toISOString() };
+      const payload = { site_name, phone, email, address, operating_hours_start, operating_hours_end, site_description, about_text, terms_text, logo_url: isDataUrl ? null : logo_url, updated_at: new Date().toISOString() };
       let error;
       if (existing) {
         ({ error } = await supabase.from('website_settings').update(payload).eq('id', existing.id));
@@ -114,6 +127,18 @@ function setupAdminRoutes(app, supabase) {
         ({ error } = await supabase.from('website_settings').insert({ id: uuidv4(), ...payload }));
       }
       if (error) throw error;
+      if (isDataUrl) {
+        try {
+          const targetId = existing?.id;
+          if (targetId) {
+            await supabase.from('website_settings').update({ logo_base64: logo_url }).eq('id', targetId);
+          } else {
+            // fetch the last inserted row to set base64
+            const { data: latest } = await supabase.from('website_settings').select('id').order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if (latest?.id) await supabase.from('website_settings').update({ logo_base64: logo_url }).eq('id', latest.id);
+          }
+        } catch {}
+      }
       logActivity(await currentAdminId(), 'update', 'Website settings', existing?.id);
       res.json({ success: true, message: 'Settings saved' });
     } catch (err) {
@@ -128,7 +153,11 @@ function setupAdminRoutes(app, supabase) {
     try {
       const { data, error } = await supabase.from('courts').select('*').order('court_number');
       if (error) throw error;
-      res.json(data || []);
+      const mapped = (data || []).map(c => ({
+        ...c,
+        image_url: c.image_base64 || c.image_url || null
+      }));
+      res.json(mapped);
     } catch { res.status(500).json({ error: 'Failed to fetch courts' }); }
   });
 
@@ -136,16 +165,27 @@ function setupAdminRoutes(app, supabase) {
     try {
       const { data, error } = await supabase.from('courts').select('*').eq('id', req.params.id).single();
       if (error || !data) return res.status(404).json({ error: 'Court not found' });
-      res.json(data);
+      res.json({ ...data, image_url: data.image_base64 || data.image_url || null });
     } catch { res.status(500).json({ error: 'Failed to fetch court' }); }
   });
 
   app.post('/api/admin/courts', async (req, res) => {
     try {
-      const { court_number, name, description, capacity, surface_type, status, image_url } = req.body;
+      const { court_number, name, description, capacity, surface_type, status } = req.body;
+      let { image_url } = req.body;
+      const isDataUrl = typeof image_url === 'string' && image_url.startsWith('data:');
       const id = uuidv4();
-      const { error } = await supabase.from('courts').insert({ id, court_number, name, description, capacity: capacity || 4, surface_type, status: status || 'active', image_url });
+      // Insert without oversized URL when base64 provided
+      const { error } = await supabase.from('courts').insert({
+        id, court_number, name, description, capacity: capacity || 4,
+        surface_type, status: status || 'active', image_url: isDataUrl ? null : image_url
+      });
       if (error) throw error;
+      // Try to persist base64 into optional column; ignore if column missing
+      if (isDataUrl) {
+        try { await supabase.from('courts').update({ image_base64: image_url }).eq('id', id); }
+        catch (e) { console.error('Failed to save Base64 image for court (create):', e?.message || e); }
+      }
       logActivity(await currentAdminId(), 'create', 'Court', id);
       res.status(201).json({ id, message: 'Court created' });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to create court' }); }
@@ -153,9 +193,20 @@ function setupAdminRoutes(app, supabase) {
 
   app.put('/api/admin/courts/:id', async (req, res) => {
     try {
-      const { court_number, name, description, capacity, surface_type, status, image_url } = req.body;
-      const { error } = await supabase.from('courts').update({ court_number, name, description, capacity, surface_type, status, image_url, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+      const { court_number, name, description, capacity, surface_type, status } = req.body;
+      let { image_url } = req.body;
+      const isDataUrl = typeof image_url === 'string' && image_url.startsWith('data:');
+      // Update base fields; null out image_url if data URL to avoid size limits
+      const { error } = await supabase.from('courts').update({
+        court_number, name, description, capacity, surface_type, status,
+        image_url: isDataUrl ? null : image_url,
+        updated_at: new Date().toISOString()
+      }).eq('id', req.params.id);
       if (error) throw error;
+      if (isDataUrl) {
+        try { await supabase.from('courts').update({ image_base64: image_url }).eq('id', req.params.id); }
+        catch (e) { console.error('Failed to save Base64 image for court (update):', e?.message || e); }
+      }
       logActivity(await currentAdminId(), 'update', 'Court', req.params.id);
       res.json({ success: true, message: 'Court updated' });
     } catch { res.status(500).json({ error: 'Failed to update court' }); }
@@ -224,7 +275,8 @@ function setupAdminRoutes(app, supabase) {
     try {
       const { data, error } = await supabase.from('payment_methods').select('*').order('sort_order');
       if (error) throw error;
-      res.json(data || []);
+      const mapped = (data || []).map(m => ({ ...m, qr_code_url: m.qr_base64 || m.qr_code_url || null }));
+      res.json(mapped);
     } catch { res.status(500).json({ error: 'Failed to fetch payment methods' }); }
   });
 
@@ -232,16 +284,22 @@ function setupAdminRoutes(app, supabase) {
     try {
       const { data, error } = await supabase.from('payment_methods').select('*').eq('id', req.params.id).single();
       if (error || !data) return res.status(404).json({ error: 'Payment method not found' });
-      res.json(data);
+      res.json({ ...data, qr_code_url: data.qr_base64 || data.qr_code_url || null });
     } catch { res.status(500).json({ error: 'Failed to fetch payment method' }); }
   });
 
   app.post('/api/admin/payment-methods', async (req, res) => {
     try {
-      const { method_name, description, instructions, account_details, is_active, qr_code_url } = req.body;
+      const { method_name, description, instructions, account_details, is_active } = req.body;
+      let { qr_code_url } = req.body;
+      const isDataUrl = typeof qr_code_url === 'string' && qr_code_url.startsWith('data:');
       const id = uuidv4();
-      const { error } = await supabase.from('payment_methods').insert({ id, method_name, description, instructions, account_details, is_active: is_active !== false, qr_code_url });
+      const { error } = await supabase.from('payment_methods').insert({ id, method_name, description, instructions, account_details, is_active: is_active !== false, qr_code_url: isDataUrl ? null : qr_code_url });
       if (error) throw error;
+      if (isDataUrl) {
+        try { await supabase.from('payment_methods').update({ qr_base64: qr_code_url }).eq('id', id); }
+        catch (e) { console.error('Failed to save Base64 QR (create):', e?.message || e); }
+      }
       logActivity(await currentAdminId(), 'create', 'Payment method', id);
       res.status(201).json({ id, message: 'Payment method created' });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to create payment method' }); }
@@ -249,9 +307,19 @@ function setupAdminRoutes(app, supabase) {
 
   app.put('/api/admin/payment-methods/:id', async (req, res) => {
     try {
-      const { method_name, description, instructions, account_details, is_active, qr_code_url } = req.body;
-      const { error } = await supabase.from('payment_methods').update({ method_name, description, instructions, account_details, is_active: Boolean(is_active), qr_code_url, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+      const { method_name, description, instructions, account_details, is_active } = req.body;
+      let { qr_code_url } = req.body;
+      const isDataUrl = typeof qr_code_url === 'string' && qr_code_url.startsWith('data:');
+      const { error } = await supabase.from('payment_methods').update({
+        method_name, description, instructions, account_details, is_active: Boolean(is_active),
+        qr_code_url: isDataUrl ? null : qr_code_url,
+        updated_at: new Date().toISOString()
+      }).eq('id', req.params.id);
       if (error) throw error;
+      if (isDataUrl) {
+        try { await supabase.from('payment_methods').update({ qr_base64: qr_code_url }).eq('id', req.params.id); }
+        catch (e) { console.error('Failed to save Base64 QR (update):', e?.message || e); }
+      }
       logActivity(await currentAdminId(), 'update', 'Payment method', req.params.id);
       res.json({ success: true, message: 'Payment method updated' });
     } catch { res.status(500).json({ error: 'Failed to update payment method' }); }
@@ -271,7 +339,7 @@ function setupAdminRoutes(app, supabase) {
   app.get('/api/admin/bookings', async (req, res) => {
     try {
       let query = supabase.from('bookings')
-        .select('*, users(name,email,phone), payments(status), time_tracking(check_in_time,check_out_time,actual_duration_minutes)')
+        .select('*, users(name,email,phone), payments(status,reference_number,payment_method), time_tracking(check_in_time,check_out_time,actual_duration_minutes)')
         .order('booking_date', { ascending: false })
         .order('start_time', { ascending: false });
 
@@ -288,7 +356,18 @@ function setupAdminRoutes(app, supabase) {
         const p = b.payments?.[0] || {};
         const t = b.time_tracking?.[0] || {};
         const { users: _u, payments: _p, time_tracking: _t, ...rest } = b;
-        return { ...rest, name: u.name, email: u.email, phone: u.phone, payment_status: p.status, check_in_time: t.check_in_time, check_out_time: t.check_out_time, actual_duration_minutes: t.actual_duration_minutes };
+        return {
+          ...rest,
+          name: u.name,
+          email: u.email,
+          phone: u.phone,
+          payment_status: p.status,
+          payment_method: p.payment_method,
+          payment_reference: p.reference_number,
+          check_in_time: t.check_in_time,
+          check_out_time: t.check_out_time,
+          actual_duration_minutes: t.actual_duration_minutes
+        };
       });
       res.json(result);
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to fetch bookings' }); }
@@ -344,6 +423,8 @@ function setupAdminRoutes(app, supabase) {
       res.json({ todayBookings, activeCourts, todayRevenue, totalUsers });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to fetch stats' }); }
   });
+
+  // Media migration endpoint removed to simplify UploadThing integration
 
   // ── ADMIN ACCOUNTS ─────────────────────────────────────────────────────────
 
