@@ -75,7 +75,7 @@ app.get('/api/pricing', async (req, res) => {
 app.get('/api/payment-methods', async (req, res) => {
   try {
     const { data, error } = await supabase.from('payment_methods')
-      .select('method_name, description, instructions, account_details, qr_code_url, qr_base64')
+      .select('method_name, description, instructions, account_details, qr_code_url, qr_base64, is_active')
       .eq('is_active', true)
       .order('sort_order');
     if (error) throw error;
