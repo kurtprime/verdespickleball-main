@@ -78,19 +78,43 @@ function setupAdminRoutes(app, supabase) {
     }
   });
 
-  // ── FILE UPLOADS → Supabase Storage ────────────────────────────────────────
+  // ── FILE UPLOADS → Base64 ──────────────────────────────────────────────────
   const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
+  // Helper to convert file to base64 data URL
+  function fileToDataUrl(file) {
+    const mime = file.mimetype || 'application/octet-stream';
+    const base64 = file.buffer.toString('base64');
+    return `data:${mime};base64,${base64}`;
+  }
+
   // Unified upload endpoint
-  // Usage: POST /api/admin/upload?bucket=<bucket>&folder=<folder>  (field name: image)
   app.post('/api/admin/upload', memoryUpload.single('image'), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-      // Convert to data URL for database storage
-      const mime = req.file.mimetype || 'application/octet-stream';
-      const base64 = req.file.buffer.toString('base64');
-      const dataUrl = `data:${mime};base64,${base64}`;
-      res.json({ url: dataUrl });
+      res.json({ url: fileToDataUrl(req.file) });
+    } catch (err) {
+      console.error('Base64 upload error:', err?.message || err);
+      res.status(500).json({ error: 'Upload failed', detail: err?.message || String(err) });
+    }
+  });
+
+  // Court image upload endpoint (used by admin dashboard)
+  app.post('/api/admin/upload-image', memoryUpload.single('image'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+      res.json({ url: fileToDataUrl(req.file) });
+    } catch (err) {
+      console.error('Base64 upload error:', err?.message || err);
+      res.status(500).json({ error: 'Upload failed', detail: err?.message || String(err) });
+    }
+  });
+
+  // Logo upload endpoint (used by admin dashboard)
+  app.post('/api/admin/upload-logo', memoryUpload.single('logo'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+      res.json({ url: fileToDataUrl(req.file) });
     } catch (err) {
       console.error('Base64 upload error:', err?.message || err);
       res.status(500).json({ error: 'Upload failed', detail: err?.message || String(err) });
